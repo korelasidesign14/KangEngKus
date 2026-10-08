@@ -1,0 +1,1747 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>KANG ENGKUS — Karawang Ngamumule Kusta</title>
+<meta name="description" content="KANG ENGKUS: gerakan digital edukasi, deteksi dini, dan akses layanan kusta Kabupaten Karawang." />
+
+<!-- ============================================================
+     CATATAN ADMIN — GOOGLE ANALYTICS
+     Untuk memantau jumlah kunjungan per hari/bulan, isi ID di bawah
+     ini dengan Measurement ID dari akun Google Analytics kamu
+     (formatnya "G-XXXXXXXXXX"). Cara mendapatkannya ada di panduan
+     terpisah (PANDUAN-GOOGLE-SHEETS-DAN-ANALYTICS.md).
+
+     Kalau belum punya ID-nya, biarkan saja apa adanya — situs tetap
+     berjalan normal, cuma datanya belum tercatat di Analytics.
+     Cukup ganti SATU baris di bawah ini, tidak perlu diubah di tempat lain.
+============================================================ -->
+<script>
+  window.GA_MEASUREMENT_ID = "G-XXXXXXXXXX"; // <-- ganti dengan Measurement ID kamu
+
+  window.dataLayer = window.dataLayer || [];
+  function gtag() { dataLayer.push(arguments); }
+  window.gtag = gtag;
+
+  if (window.GA_MEASUREMENT_ID && window.GA_MEASUREMENT_ID.indexOf("XXXX") === -1) {
+    var gaScript = document.createElement("script");
+    gaScript.async = true;
+    gaScript.src = "https://www.googletagmanager.com/gtag/js?id=" + window.GA_MEASUREMENT_ID;
+    document.head.appendChild(gaScript);
+    gtag("js", new Date());
+    gtag("config", window.GA_MEASUREMENT_ID);
+  }
+</script>
+
+<!-- Tailwind (CDN, no build step) -->
+<script src="https://cdn.tailwindcss.com"></script>
+
+<!-- Font -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+
+<!-- Import map: lets the browser resolve "react", "react-dom/client", "lucide-react" -->
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@18.3.1",
+    "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+    "lucide-react": "https://esm.sh/lucide-react@0.383.0?external=react"
+  }
+}
+</script>
+
+<style>
+  html, body { margin: 0; padding: 0; }
+  #root { min-height: 100vh; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<!-- Babel: compiles JSX in the browser, no build step needed -->
+<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+
+<script type="text/babel" data-type="module" data-presets="react">
+import React, { useState, useEffect, useMemo, useRef, useContext, createContext } from "react";
+import ReactDOM from "react-dom/client";
+
+/* ============================================================
+   CATATAN ADMIN — SUMBER DATA GOOGLE SHEETS
+   Situs ini bisa membaca konten (Statistik, Video, Unduhan, Puskesmas)
+   langsung dari Google Sheets, supaya bisa diupdate tanpa sentuh kode.
+
+   Cara menyambungkan:
+   1. Buka Google Sheets-nya, pastikan sudah "Anyone with the link: Viewer".
+   2. Ambil ID sheet dari URL-nya:
+      https://docs.google.com/spreadsheets/d/INI_ID_NYA/edit
+   3. Isi SHEET_ID di bawah ini dengan ID tersebut.
+   4. Untuk tiap tab (Statistik, Video, Unduhan, Puskesmas), buka tabnya,
+      lihat di URL bagian akhir "#gid=12345" — itu adalah gid tab tsb.
+      Isi ke SHEET_GIDS di bawah.
+   5. Kosongkan (biarkan "") SHEET_ID kalau belum mau pakai Google Sheets —
+      situs otomatis memakai data bawaan di dalam kode.
+============================================================ */
+const SHEET_ID = ""; // <-- isi ID Google Sheets di sini
+const SHEET_GIDS = {
+  stats: "0",       // ganti sesuai gid tab "Statistik"
+  videos: "0",      // ganti sesuai gid tab "Video"
+  downloads: "0",   // ganti sesuai gid tab "Unduhan"
+  facilities: "0",  // ganti sesuai gid tab "Puskesmas"
+};
+
+/* ============================================================
+   CATATAN ADMIN — FORM "LAPORKAN KASUS"
+   Laporan dari form ini dikirim langsung ke WhatsApp Pak Wasor
+   (bukan disimpan ke database/sheet). Begitu warga klik "Kirim
+   Laporan", WhatsApp akan terbuka dengan pesan yang sudah terisi
+   otomatis dari isian form, tinggal ditekan kirim oleh pelapor.
+
+   Untuk ganti nomor WA Pak Wasor, edit WASOR_WA_NUMBER di bawah
+   (format: kode negara tanpa "+" atau "0" di depan, mis. 62812xxxx).
+============================================================ */
+const WASOR_WA_NUMBER = "6289677399649";
+
+function extractYouTubeId(raw) {
+  if (!raw) return null;
+  const v = String(raw).trim();
+  // sudah berupa ID YouTube yang valid (11 karakter)
+  if (/^[a-zA-Z0-9_-]{11}$/.test(v)) return v;
+  // berupa link lengkap -> ambil ID-nya
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=)([a-zA-Z0-9_-]{11})/,
+    /(?:youtu\.be\/)([a-zA-Z0-9_-]{11})/,
+    /(?:youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/,
+    /(?:youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/,
+  ];
+  for (const p of patterns) {
+    const m = v.match(p);
+    if (m) return m[1];
+  }
+  return null; // format tidak dikenali -> dianggap belum ada video (tampil "Segera Hadir")
+}
+
+function parseCSV(text) {
+  const rows = [];
+  let row = [], field = "", inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i], next = text[i + 1];
+    if (inQuotes) {
+      if (ch === '"' && next === '"') { field += '"'; i++; }
+      else if (ch === '"') { inQuotes = false; }
+      else { field += ch; }
+    } else {
+      if (ch === '"') inQuotes = true;
+      else if (ch === ",") { row.push(field); field = ""; }
+      else if (ch === "\n") { row.push(field); rows.push(row); row = []; field = ""; }
+      else if (ch === "\r") { /* skip */ }
+      else field += ch;
+    }
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  if (!rows.length) return [];
+  const header = rows[0].map((h) => h.trim().toLowerCase());
+  return rows.slice(1).filter((r) => r.some((c) => c.trim() !== "")).map((r) => {
+    const obj = {};
+    header.forEach((h, i) => (obj[h] = (r[i] || "").trim()));
+    return obj;
+  });
+}
+
+async function fetchSheetTab(gid) {
+  const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=${gid}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("Gagal mengambil data sheet");
+  return parseCSV(await res.text());
+}
+
+const DataContext = createContext(null);
+
+function useSheetData(defaults) {
+  const [state, setState] = useState({ ...defaults, live: false, loading: !!SHEET_ID });
+
+  useEffect(() => {
+    if (!SHEET_ID) return; // pakai data bawaan
+    let cancelled = false;
+    (async () => {
+      try {
+        const [statsRows, videoRows, dlRows, facRows] = await Promise.all([
+          fetchSheetTab(SHEET_GIDS.stats).catch(() => null),
+          fetchSheetTab(SHEET_GIDS.videos).catch(() => null),
+          fetchSheetTab(SHEET_GIDS.downloads).catch(() => null),
+          fetchSheetTab(SHEET_GIDS.facilities).catch(() => null),
+        ]);
+        if (cancelled) return;
+        const TONES = ["primary", "secondary", "accent"];
+        setState({
+          stats: statsRows && statsRows.length
+            ? statsRows.map((r) => ({ label: r.label || "", value: Number(r.value) || 0, suffix: r.suffix || "" }))
+            : defaults.stats,
+          videos: videoRows && videoRows.length
+            ? videoRows.map((r, i) => ({ id: i + 1, title: r.judul || "", cat: r.kategori || "", dur: r.durasi || "", tone: TONES[i % 3], youtubeId: extractYouTubeId(r.youtube_id) }))
+            : defaults.videos,
+          downloads: dlRows && dlRows.length
+            ? dlRows.map((r) => ({ title: r.judul || "", cat: r.kategori || "", format: r.format || "", size: r.ukuran || "", file: r.file || null }))
+            : defaults.downloads,
+          facilities: facRows && facRows.length
+            ? facRows.map((r) => ({ name: r.nama || "", district: r.kecamatan || "", address: r.alamat || "", service: (r.layani_kusta || "").toLowerCase().startsWith("y") }))
+            : defaults.facilities,
+          live: true,
+          loading: false,
+        });
+      } catch (e) {
+        if (!cancelled) setState((s) => ({ ...s, loading: false }));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  return state;
+}
+import {
+  Menu, X, ChevronRight, ChevronLeft, Play, Download, MapPin, Phone,
+  Clock, Search, ArrowRight, Check, CheckCircle2, Info, Heart, Shield,
+  Users, BookOpen, Video as VideoIcon, ClipboardCheck, FileText,
+  Image as ImageIcon, Send, Camera, AlertTriangle, Star, GraduationCap,
+  Navigation, Building2, RotateCcw, Sparkles, ChevronDown, PlayCircle,
+  Share2, MessageCircleHeart, Frown, Smile, ShieldCheck, HandHeart,
+  Target, Compass, HeartHandshake
+} from "lucide-react";
+
+/* ============================================================
+   DESIGN TOKENS
+   Primary  #22C55E (green)   Secondary #0EA5E9 (sky)
+   Accent   #F59E0B (amber)   Background #F8FAFC
+   Radius   20px               Font Poppins
+============================================================ */
+
+const COLORS = {
+  primary: "#22C55E",
+  primaryDark: "#16A34A",
+  secondary: "#0EA5E9",
+  accent: "#F59E0B",
+  bg: "#F8FAFC",
+};
+
+/* ---------- Mascot: Kang EngKus (flat illustration SVG) ---------- */
+function Mascot({ className = "", pose = "wave", size = 220 }) {
+  return (
+    <svg
+      viewBox="0 0 300 340"
+      width={size}
+      height={size}
+      className={className}
+      aria-label="Maskot Kang EngKus"
+    >
+      <defs>
+        <linearGradient id="mascotGlow" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#DCFCE7" />
+          <stop offset="100%" stopColor="#DCFCE7" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <ellipse cx="150" cy="310" rx="95" ry="18" fill="#0F172A" opacity="0.06" />
+      <circle cx="150" cy="150" r="140" fill="url(#mascotGlow)" />
+
+      {/* Bag strap */}
+      <path d="M95 150 L215 235" stroke="#B45309" strokeWidth="10" strokeLinecap="round" />
+      {/* Medical bag */}
+      <g transform="translate(178,222)">
+        <rect x="-28" y="-6" width="56" height="44" rx="10" fill="#F59E0B" />
+        <rect x="-28" y="-6" width="56" height="16" rx="8" fill="#FBBF24" />
+        <rect x="-9" y="4" width="18" height="6" rx="2" fill="#fff" />
+        <rect x="-3" y="-2" width="6" height="18" rx="2" fill="#fff" />
+      </g>
+
+      {/* Legs */}
+      <rect x="120" y="255" width="26" height="55" rx="12" fill="#1E293B" />
+      <rect x="156" y="255" width="26" height="55" rx="12" fill="#1E293B" />
+      <rect x="112" y="300" width="42" height="16" rx="8" fill="#0F172A" />
+      <rect x="150" y="300" width="42" height="16" rx="8" fill="#0F172A" />
+
+      {/* Vest body */}
+      <path d="M105 165 Q150 150 195 165 L205 260 Q150 278 95 260 Z" fill="#22C55E" />
+      <path d="M105 165 Q150 150 195 165 L200 185 Q150 198 100 185 Z" fill="#16A34A" />
+      {/* Vest reflective stripe */}
+      <rect x="98" y="215" width="104" height="10" rx="5" fill="#F0FDF4" opacity="0.85" />
+      {/* Zipper */}
+      <line x1="150" y1="160" x2="150" y2="270" stroke="#15803D" strokeWidth="3" strokeDasharray="2 4" />
+      {/* Vest pocket */}
+      <rect x="112" y="230" width="30" height="22" rx="5" fill="#16A34A" />
+
+      {/* Arms */}
+      <path d="M108 172 Q70 190 62 235" stroke="#22C55E" strokeWidth="26" strokeLinecap="round" fill="none" />
+      <circle cx="60" cy="240" r="15" fill="#F2C08C" />
+      {pose === "wave" ? (
+        <g transform="rotate(-15 222 175)">
+          <path d="M192 172 Q235 160 222 118" stroke="#22C55E" strokeWidth="26" strokeLinecap="round" fill="none" />
+          <circle cx="222" cy="112" r="15" fill="#F2C08C" />
+        </g>
+      ) : (
+        <path d="M192 172 Q232 188 240 232" stroke="#22C55E" strokeWidth="26" strokeLinecap="round" fill="none" />
+      )}
+      {pose !== "wave" && <circle cx="240" cy="238" r="15" fill="#F2C08C" />}
+
+      {/* Neck */}
+      <rect x="138" y="130" width="24" height="24" rx="8" fill="#F2C08C" />
+
+      {/* Head */}
+      <circle cx="150" cy="102" r="52" fill="#F2C08C" />
+      {/* Ears */}
+      <circle cx="100" cy="106" r="9" fill="#F2C08C" />
+      <circle cx="200" cy="106" r="9" fill="#F2C08C" />
+
+      {/* Iket Sunda (headband) */}
+      <path d="M96 90 Q150 48 204 90 L200 68 Q150 34 100 68 Z" fill="#0EA5E9" />
+      <path d="M96 90 Q150 108 204 90 L204 78 Q150 96 96 78 Z" fill="#0284C7" />
+      {/* Iket knot */}
+      <path d="M188 62 Q212 52 208 78 Q222 66 218 88 Q200 92 188 78 Z" fill="#0EA5E9" />
+      <circle cx="150" cy="60" r="6" fill="#F59E0B" />
+
+      {/* Face */}
+      <circle cx="130" cy="104" r="6" fill="#1E293B" />
+      <circle cx="170" cy="104" r="6" fill="#1E293B" />
+      <circle cx="132" cy="101" r="1.8" fill="#fff" />
+      <circle cx="172" cy="101" r="1.8" fill="#fff" />
+      {/* Eyebrows */}
+      <path d="M120 92 Q130 87 140 92" stroke="#1E293B" strokeWidth="3" strokeLinecap="round" fill="none" />
+      <path d="M160 92 Q170 87 180 92" stroke="#1E293B" strokeWidth="3" strokeLinecap="round" fill="none" />
+      {/* Smile */}
+      <path d="M124 120 Q150 142 176 120" stroke="#1E293B" strokeWidth="4" strokeLinecap="round" fill="none" />
+      {/* Cheeks */}
+      <circle cx="118" cy="118" r="7" fill="#F59E0B" opacity="0.35" />
+      <circle cx="182" cy="118" r="7" fill="#F59E0B" opacity="0.35" />
+      {/* Mustache hint */}
+      <path d="M138 114 Q150 119 162 114" stroke="#78350F" strokeWidth="2.5" strokeLinecap="round" fill="none" opacity="0.6" />
+
+      {/* Sparkle */}
+      <g transform="translate(248,150)" opacity="0.9">
+        <path d="M0 -10 L3 -3 L10 0 L3 3 L0 10 L-3 3 L-10 0 L-3 -3 Z" fill="#F59E0B" />
+      </g>
+    </svg>
+  );
+}
+
+/* ---------- small UI atoms ---------- */
+function Button({ children, variant = "primary", size = "md", className = "", ...props }) {
+  const base =
+    "inline-flex items-center justify-center gap-2 font-semibold rounded-[20px] transition-all duration-200 active:scale-95 disabled:opacity-50";
+  const sizes = { md: "px-5 py-3 text-sm", lg: "px-7 py-4 text-base", sm: "px-4 py-2 text-xs" };
+  const variants = {
+    primary: "text-white shadow-lg shadow-green-500/25 hover:shadow-xl hover:shadow-green-500/35 hover:-translate-y-0.5",
+    secondary: "text-white shadow-lg shadow-sky-500/25 hover:shadow-xl hover:-translate-y-0.5",
+    outline: "border-2 bg-white hover:bg-slate-50",
+    ghost: "hover:bg-slate-100 text-slate-600",
+    accent: "text-white shadow-lg shadow-amber-500/25 hover:-translate-y-0.5",
+  };
+  const styleByVariant = {
+    primary: { background: `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.primaryDark})` },
+    secondary: { background: `linear-gradient(135deg, ${COLORS.secondary}, #0369A1)` },
+    outline: { borderColor: COLORS.primary, color: COLORS.primaryDark },
+    accent: { background: `linear-gradient(135deg, ${COLORS.accent}, #D97706)` },
+    ghost: {},
+  };
+  return (
+    <button
+      className={`${base} ${sizes[size]} ${variants[variant]} ${className}`}
+      style={styleByVariant[variant]}
+      {...props}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Card({ children, className = "", hover = true, ...props }) {
+  return (
+    <div
+      className={`bg-white rounded-[20px] shadow-[0_2px_20px_rgba(15,23,42,0.06)] ${
+        hover ? "hover:shadow-[0_12px_30px_rgba(15,23,42,0.10)] hover:-translate-y-1" : ""
+      } transition-all duration-300 ${className}`}
+      {...props}
+    >
+      {children}
+    </div>
+  );
+}
+
+function Badge({ children, tone = "primary" }) {
+  const tones = {
+    primary: "bg-green-100 text-green-700",
+    secondary: "bg-sky-100 text-sky-700",
+    accent: "bg-amber-100 text-amber-700",
+    slate: "bg-slate-100 text-slate-600",
+  };
+  return (
+    <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold ${tones[tone]}`}>
+      {children}
+    </span>
+  );
+}
+
+function SectionHeading({ eyebrow, title, subtitle, center = false }) {
+  return (
+    <div className={`mb-10 ${center ? "text-center" : ""}`}>
+      {eyebrow && (
+        <div className={`flex items-center gap-2 mb-3 ${center ? "justify-center" : ""}`}>
+          <span className="w-6 h-1.5 rounded-full" style={{ background: COLORS.accent }} />
+          <span className="text-sm font-bold tracking-wide uppercase" style={{ color: COLORS.primaryDark }}>
+            {eyebrow}
+          </span>
+        </div>
+      )}
+      <h2 className="text-3xl md:text-4xl font-extrabold text-slate-900 mb-3">{title}</h2>
+      {subtitle && <p className={`text-slate-500 text-base md:text-lg ${center ? "max-w-2xl mx-auto" : "max-w-2xl"}`}>{subtitle}</p>}
+    </div>
+  );
+}
+
+function ProgressRing({ value, size = 44 }) {
+  const r = (size - 6) / 2;
+  const c = 2 * Math.PI * r;
+  return (
+    <svg width={size} height={size} className="-rotate-90">
+      <circle cx={size / 2} cy={size / 2} r={r} stroke="#E2E8F0" strokeWidth="5" fill="none" />
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={r}
+        stroke={COLORS.primary}
+        strokeWidth="5"
+        fill="none"
+        strokeDasharray={c}
+        strokeDashoffset={c - (value / 100) * c}
+        strokeLinecap="round"
+        style={{ transition: "stroke-dashoffset 0.6s ease" }}
+      />
+    </svg>
+  );
+}
+
+/* ============================================================
+   DATA
+============================================================ */
+
+const HOME_MENU = [
+  { id: "learn", title: "Belajar Kusta", desc: "Materi edukasi lengkap dan mudah dipahami", icon: BookOpen, tone: "primary" },
+  { id: "videos", title: "Video Edukasi", desc: "Tonton video singkat seputar kusta", icon: VideoIcon, tone: "secondary" },
+  { id: "screening", title: "Skrining Mandiri", desc: "Cek risiko kusta dari rumah, 2 menit selesai", icon: ClipboardCheck, tone: "accent" },
+  { id: "locator", title: "Cari Layanan", desc: "Temukan Puskesmas terdekat di Karawang", icon: MapPin, tone: "primary" },
+  { id: "myths", title: "Mitos vs Fakta", desc: "Luruskan kesalahpahaman tentang kusta", icon: MessageCircleHeart, tone: "secondary" },
+  { id: "downloads", title: "Download Media", desc: "Poster, leaflet, komik, dan lainnya", icon: Download, tone: "accent" },
+  { id: "about", title: "Tentang Kang EngKus", desc: "Kenali visi dan misi program ini", icon: Heart, tone: "primary" },
+];
+
+/* CATATAN ADMIN: angka "Kasus kusta Karawang" diupdate setiap bulan.
+   Cukup ganti angka "value" di bawah ini setiap ada data terbaru (dan sesuaikan bulan pada "label"). */
+const DEFAULT_STATS = [
+  { label: "Kasus baru kusta (Juni 2026)", value: 183, suffix: "" },
+  { label: "Desa endemis", value: 108, suffix: "" },
+  { label: "Puskesmas layanan kusta", value: 50, suffix: "" },
+  { label: "Warga melakukan deteksi dini kusta", value: 18500, suffix: "+" },
+];
+
+const LEARN_TOPICS = [
+  {
+    id: "apa-itu",
+    title: "Apa itu Kusta?",
+    time: "3 menit",
+    tone: "primary",
+    summary: "Kusta adalah penyakit infeksi menahun yang menyerang kulit dan saraf tepi.",
+    body: "Kusta (lepra) adalah penyakit infeksi yang disebabkan oleh bakteri Mycobacterium leprae. Penyakit ini terutama menyerang kulit dan saraf tepi, sehingga bisa menimbulkan bercak kulit dan gangguan rasa. Kusta bukan penyakit keturunan, bukan kutukan, dan bukan akibat guna-guna. Dengan pengobatan yang tepat, kusta bisa disembuhkan total.",
+  },
+  {
+    id: "penyebab",
+    title: "Penyebab Kusta",
+    time: "2 menit",
+    tone: "secondary",
+    summary: "Disebabkan oleh bakteri Mycobacterium leprae, bukan kutukan atau guna-guna.",
+    body: "Kusta disebabkan oleh bakteri bernama Mycobacterium leprae. Bakteri ini tumbuh sangat lambat, sehingga gejala baru muncul bertahun-tahun setelah tertular. Karena penyebabnya jelas berupa bakteri, kusta dapat dicegah dan diobati secara medis seperti penyakit infeksi lainnya.",
+  },
+  {
+    id: "penularan",
+    title: "Penularan Kusta",
+    time: "3 menit",
+    tone: "accent",
+    summary: "Menular lewat percikan napas pada kontak dekat dan lama, bukan sekali bersalaman.",
+    body: "Kusta menular melalui percikan cairan hidung dan mulut saat kontak dekat dan berulang dalam waktu lama dengan penderita yang belum diobati. Kusta tidak menular hanya dengan bersalaman, berbagi makanan, atau duduk berdekatan sesaat. Setelah minum obat MDT dosis pertama, penderita sudah jauh lebih kecil kemungkinannya menularkan penyakit.",
+  },
+  {
+    id: "gejala",
+    title: "Gejala Kusta",
+    time: "4 menit",
+    tone: "primary",
+    summary: "Bercak kulit yang mati rasa adalah tanda khas yang perlu diwaspadai.",
+    body: "Gejala utama kusta adalah bercak putih atau kemerahan pada kulit yang terasa baal atau mati rasa, kesemutan atau kebas pada tangan dan kaki, serta kelemahan otot pada mata, tangan, atau kaki. Bercak biasanya tidak gatal, berbeda dengan panu atau alergi kulit biasa.",
+  },
+  {
+    id: "pengobatan",
+    title: "Pengobatan Kusta",
+    time: "3 menit",
+    tone: "secondary",
+    summary: "Kusta dapat disembuhkan total dengan pengobatan rutin dan tuntas.",
+    body: "Pengobatan kusta menggunakan kombinasi beberapa jenis obat yang disebut MDT (Multi Drug Therapy), diberikan gratis di Puskesmas. Lama pengobatan sekitar 6 hingga 12 bulan tergantung tipe kusta. Obat harus diminum rutin dan tuntas agar bakteri benar-benar hilang dan mencegah kecacatan.",
+  },
+  {
+    id: "mdt",
+    title: "Mengenal Obat MDT",
+    time: "3 menit",
+    tone: "accent",
+    summary: "MDT adalah paket obat kombinasi resmi WHO yang gratis dan efektif.",
+    body: "MDT (Multi Drug Therapy) adalah paket obat kombinasi yang direkomendasikan WHO untuk mengobati kusta secara tuntas. Obat ini tersedia gratis di seluruh Puskesmas. Minum obat sesuai jadwal sangat penting agar bakteri tidak kebal dan pengobatan berhasil.",
+  },
+  {
+    id: "kemoprofilaksis",
+    title: "Kemoprofilaksis",
+    time: "2 menit",
+    tone: "primary",
+    summary: "Obat pencegahan bagi orang yang kontak dekat dengan penderita kusta.",
+    body: "Kemoprofilaksis adalah pemberian obat pencegahan (dosis tunggal) kepada orang-orang yang tinggal serumah atau kontak dekat dengan penderita kusta, meski belum bergejala. Langkah ini terbukti menurunkan risiko tertular hingga bertahun-tahun ke depan.",
+  },
+  {
+    id: "perawatan-diri",
+    title: "Perawatan Diri",
+    time: "4 menit",
+    tone: "secondary",
+    summary: "Rawat kulit dan sendi yang mati rasa agar terhindar dari luka dan cacat.",
+    body: "Bagian tubuh yang mati rasa akibat kusta perlu dirawat khusus: periksa kulit setiap hari, rendam dan gosok halus bagian yang kapalan, gunakan pelembap, dan lindungi tangan-kaki saat beraktivitas agar terhindar dari luka yang tidak terasa.",
+  },
+  {
+    id: "pencegahan-disabilitas",
+    title: "Pencegahan Disabilitas",
+    time: "3 menit",
+    tone: "accent",
+    summary: "Deteksi dan obati sejak dini agar kecacatan bisa dicegah.",
+    body: "Kecacatan akibat kusta terjadi bila pengobatan terlambat. Semakin cepat kusta ditemukan dan diobati, semakin kecil risiko kerusakan saraf permanen. Latihan sendi, alat bantu, dan pemeriksaan rutin membantu mencegah perburukan.",
+  },
+  {
+    id: "pemeriksaan-kontak",
+    title: "Pemeriksaan Kontak",
+    time: "2 menit",
+    tone: "primary",
+    summary: "Keluarga dan tetangga dekat penderita perlu diperiksa secara berkala.",
+    body: "Orang-orang yang tinggal serumah atau sering berdekatan dengan penderita kusta dianjurkan menjalani pemeriksaan kulit dan saraf secara berkala selama beberapa tahun, agar bila tertular bisa terdeteksi dan diobati sejak dini.",
+  },
+  {
+    id: "stigma",
+    title: "Stigma terhadap Kusta",
+    time: "3 menit",
+    tone: "secondary",
+    summary: "Kenali kustanya, jangan jauhi orangnya.",
+    body: "Stigma membuat penderita kusta takut memeriksakan diri, sehingga pengobatan tertunda dan penularan berlanjut. Padahal setelah minum obat, penderita kusta bisa beraktivitas normal dan tidak lagi menularkan penyakit. Dukungan keluarga dan masyarakat sangat membantu proses kesembuhan.",
+  },
+];
+
+const VIDEO_CATEGORIES = ["Semua", "Pengetahuan Dasar", "Gejala", "Pengobatan", "Keluarga", "Anak-anak", "Animasi", "Edukasi Komunitas"];
+
+/* ============================================================
+   CATATAN ADMIN — CARA MENAMBAHKAN VIDEO:
+   1. Upload video ke YouTube (boleh "Tidak Publik / Unlisted").
+   2. Salin ID video dari link, contoh:
+      https://www.youtube.com/watch?v=ABC123xyz  ->  ID-nya "ABC123xyz"
+   3. Tempel ID itu ke field youtubeId di bawah, di video yang sesuai.
+   4. Video yang youtubeId-nya masih null akan tampil sebagai "Segera Hadir".
+============================================================ */
+const DEFAULT_VIDEOS = [
+  { id: 1, title: "Mengenal Kusta dalam 2 Menit", cat: "Pengetahuan Dasar", dur: "2:14", tone: "primary", youtubeId: null },
+  { id: 2, title: "Kenali Bercak Kusta Sejak Dini", cat: "Gejala", dur: "3:05", tone: "secondary", youtubeId: null },
+  { id: 3, title: "Perjalanan Minum Obat MDT", cat: "Pengobatan", dur: "4:20", tone: "accent", youtubeId: null },
+  { id: 4, title: "Cerita Keluarga: Merawat dengan Cinta", cat: "Keluarga", dur: "5:10", tone: "primary", youtubeId: null },
+  { id: 5, title: "Kang EngKus Bercerita untuk Anak", cat: "Anak-anak", dur: "3:40", tone: "secondary", youtubeId: null },
+  { id: 6, title: "Animasi: Perjalanan Bakteri Kusta", cat: "Animasi", dur: "2:50", tone: "accent", youtubeId: null },
+  { id: 7, title: "Kader Sehat Turun ke Kampung", cat: "Edukasi Komunitas", dur: "6:02", tone: "primary", youtubeId: null },
+  { id: 8, title: "Apa Kata Dokter Puskesmas?", cat: "Pengetahuan Dasar", dur: "4:47", tone: "secondary", youtubeId: null },
+  { id: 9, title: "Langkah Perawatan Diri di Rumah", cat: "Pengobatan", dur: "3:33", tone: "accent", youtubeId: null },
+  { id: 10, title: "Sekolah Ramah Kusta", cat: "Anak-anak", dur: "3:12", tone: "primary", youtubeId: null },
+  { id: 11, title: "Mitos yang Sering Beredar", cat: "Edukasi Komunitas", dur: "4:05", tone: "secondary", youtubeId: null },
+  { id: 12, title: "Gejala yang Wajib Diwaspadai", cat: "Gejala", dur: "2:58", tone: "accent", youtubeId: null },
+];
+
+const MYTHS = [
+  { myth: "Kusta adalah kutukan atau guna-guna.", fact: "Kusta disebabkan oleh bakteri Mycobacterium leprae, bukan kutukan. Ini penyakit infeksi biasa yang bisa diobati secara medis." },
+  { myth: "Kusta menular semudah flu, cukup dengan bersalaman.", fact: "Penularan kusta butuh kontak dekat dan lama secara berulang. Bersalaman atau berbagi alat makan sesaat tidak menularkan kusta." },
+  { myth: "Kusta tidak bisa disembuhkan.", fact: "Kusta bisa disembuhkan total dengan pengobatan MDT gratis di Puskesmas, asal diminum rutin sampai tuntas." },
+  { myth: "Penderita kusta harus dijauhi dan diasingkan.", fact: "Setelah mulai minum obat, penderita kusta jauh lebih kecil kemungkinannya menularkan. Mereka tetap boleh bekerja, sekolah, dan berkumpul seperti biasa." },
+  { myth: "Kusta hanya menyerang orang miskin dan kotor.", fact: "Kusta bisa menyerang siapa saja tanpa memandang status ekonomi atau kebersihan. Faktor utamanya adalah kontak dengan bakteri penyebabnya." },
+  { myth: "Bercak kusta selalu terasa gatal.", fact: "Bercak kusta biasanya justru mati rasa atau baal, bukan gatal. Inilah yang membedakannya dari panu atau alergi kulit." },
+  { myth: "Kusta adalah penyakit keturunan.", fact: "Kusta bukan penyakit keturunan. Penyakit ini disebabkan oleh infeksi bakteri yang bisa dicegah dan diobati." },
+];
+
+const SCREENING_QUESTIONS = [
+  { id: "q1", text: "Apakah ada bercak putih atau kemerahan di kulitmu?" },
+  { id: "q2", text: "Apakah bercak tersebut terasa baal atau mati rasa saat disentuh?" },
+  { id: "q3", text: "Apakah bercak sudah ada lebih dari 3 bulan dan tidak hilang?" },
+  { id: "q4", text: "Apakah kamu sering kesemutan atau kebas di tangan atau kaki?" },
+  { id: "q5", text: "Apakah ada kelemahan otot di tangan, kaki, atau kelopak mata?" },
+  { id: "q6", text: "Apakah ada anggota keluarga atau tetangga dekat yang pernah menderita kusta?" },
+];
+
+const DISTRICTS = [
+  "Semua Kecamatan", "Pangkalan", "Tegalwaru", "Ciampel", "Telukjambe Timur", "Telukjambe Barat",
+  "Klari", "Cikampek", "Purwasari", "Tirtamulya", "Jatisari", "Banyusari", "Kotabaru",
+  "Cilamaya Wetan", "Cilamaya Kulon", "Lemahabang", "Telagasari", "Majalaya",
+  "Karawang Timur", "Karawang Barat", "Rawamerta", "Tempuran", "Kutawaluya",
+  "Rengasdengklok", "Jayakerta", "Pedes", "Cilebar", "Cibuaya", "Tirtajaya",
+  "Batujaya", "Pakisjaya",
+];
+
+const DEFAULT_FACILITIES = [
+  { name: "Puskesmas Pangkalan", district: "Pangkalan", address: "Jl. Raya Pangkalan No.5, Ciptasari, Kec. Pangkalan, Karawang 41362", service: true },
+  { name: "Puskesmas Loji", district: "Tegalwaru", address: "Jl. Raya Loji, Cintalaksana, Kec. Tegalwaru, Karawang 41362", service: true },
+  { name: "Puskesmas Ciampel", district: "Ciampel", address: "Jl. Cikonju, Kutapohaci, Kec. Ciampel, Karawang 41363", service: true },
+  { name: "Puskesmas Telukjambe", district: "Telukjambe Timur", address: "Jl. Jalitri, Pinayungan, Kec. Telukjambe Timur, Karawang 41361", service: true },
+  { name: "Puskesmas Wadas", district: "Telukjambe Timur", address: "Jl. Pintu Air No.1, Wadas, Kec. Telukjambe Timur, Karawang 41361", service: true },
+  { name: "Puskesmas Wanakerta", district: "Telukjambe Barat", address: "Jl. Raya Wanakerta, Kec. Telukjambe Barat, Karawang 41361", service: true },
+  { name: "Puskesmas Klari", district: "Klari", address: "Jl. Raya Kosambi No.20, Duren, Kec. Klari, Karawang 41371", service: true },
+  { name: "Puskesmas Anggadita", district: "Klari", address: "Jl. Raya Klari, Anggadita, Kec. Klari, Karawang 41371", service: true },
+  { name: "Puskesmas Curug", district: "Klari", address: "Jl. Suka Galih No.93, Curug, Kec. Klari, Karawang 41371", service: true },
+  { name: "Puskesmas Cikampek", district: "Cikampek", address: "Jl. Jend. Ahmad Yani No.50, Cikampek Sel., Kec. Cikampek, Karawang 41373", service: true },
+  { name: "Puskesmas Purwasari", district: "Purwasari", address: "Purwasari, Kec. Purwasari, Karawang 41373", service: true },
+  { name: "Puskesmas Tirtamulya", district: "Tirtamulya", address: "Citarik, Kec. Tirtamulya, Karawang 41372", service: true },
+  { name: "Puskesmas Jatisari", district: "Jatisari", address: "Jl. Raya Jatisari No.2009, Mekarsari, Kec. Jatisari, Karawang 41374", service: true },
+  { name: "Puskesmas Pacing", district: "Jatisari", address: "Jl. Raya Pacing, Kec. Jatisari, Karawang 41374", service: true },
+  { name: "Puskesmas Cicinde", district: "Banyusari", address: "Jl. Raya Cilamaya No.02, Cicinde Utara, Kec. Banyusari, Karawang 41374", service: true },
+  { name: "Puskesmas Gempol", district: "Banyusari", address: "Jl. Cilamaya Cikampek No.9, Gempol, Kec. Banyusari, Karawang 41374", service: true },
+  { name: "Puskesmas Kotabaru", district: "Kotabaru", address: "Jl. Raya Wancimekar, Kec. Kotabaru, Karawang 41374", service: true },
+  { name: "Puskesmas Jomin", district: "Kotabaru", address: "Jl. Rajawali No.51, Jomin Barat, Kec. Kotabaru, Karawang 41374", service: true },
+  { name: "Puskesmas Cikampek Utara", district: "Cikampek", address: "Jl. Lapang Wirasaba No.6, Cikampek Utara, Kec. Cikampek, Karawang 41373", service: true },
+  { name: "Puskesmas Cilamaya", district: "Cilamaya Wetan", address: "Cilamaya, Kec. Cilamaya Wetan, Karawang 41384", service: true },
+  { name: "Puskesmas Sukatani", district: "Cilamaya Wetan", address: "Sukatani, Kec. Cilamaya Wetan, Karawang 41384", service: true },
+  { name: "Puskesmas Pasirukem", district: "Cilamaya Kulon", address: "Pasirukem, Kec. Cilamaya Kulon, Karawang 41384", service: true },
+  { name: "Puskesmas Bayurlor", district: "Cilamaya Kulon", address: "Bayur Kidul, Kec. Cilamaya Kulon, Karawang 41384", service: true },
+  { name: "Puskesmas Lemahabang", district: "Lemahabang", address: "Jl. Raya Syeh Quro, Lemahabang, Kec. Lemahabang, Karawang 41383", service: true },
+  { name: "Puskesmas Telagasari", district: "Telagasari", address: "Jl. Raya Telagasari-Kosambi, Talagasari, Kec. Telagasari, Karawang 41381", service: true },
+  { name: "Puskesmas Majalaya", district: "Majalaya", address: "Lemahmulya, Kec. Majalaya, Karawang 41371", service: true },
+  { name: "Puskesmas Plawad", district: "Karawang Timur", address: "Plawad, Kec. Karawang Timur, Karawang 41314", service: true },
+  { name: "Puskesmas Adiarsa", district: "Karawang Timur", address: "Jl. Johar Timur, Adiarsa Timur, Kec. Karawang Timur, Karawang 41311", service: true },
+  { name: "Puskesmas Karawang", district: "Karawang Barat", address: "Jl. Jend. A. Yani, Karangpawitan, Kec. Karawang Barat, Karawang 41315", service: true },
+  { name: "Puskesmas Tanjungpura", district: "Karawang Barat", address: "Jl. Rangga Gede No.168, Tanjungpura, Kec. Karawang Barat, Karawang 41316", service: true },
+  { name: "Puskesmas Tunggakjati", district: "Karawang Barat", address: "Jl. Raya Rengasdengklok No.354, Tunggakjati, Kec. Karawang Barat, Karawang 41311", service: true },
+  { name: "Puskesmas Nagasari", district: "Karawang Barat", address: "Jl. Nagasari No.2, Nagasari, Kec. Karawang Barat, Karawang 41311", service: true },
+  { name: "Puskesmas Karawang Kulon", district: "Karawang Barat", address: "Jl. Kertabumi No.14, Karawang Kulon, Kec. Karawang Barat, Karawang 41311", service: true },
+  { name: "Puskesmas Rawamerta", district: "Rawamerta", address: "Jl. Komplek Pendidikan No.64, Sukamerta, Kec. Rawamerta, Karawang 41382", service: true },
+  { name: "Puskesmas Balongsari", district: "Rawamerta", address: "Rawagede, Jl. Manunggal VII, Balongsari, Kec. Rawamerta, Karawang 41382", service: true },
+  { name: "Puskesmas Tempuran", district: "Tempuran", address: "Jl. Raya Baros Tempuran, Pancakarya, Kec. Tempuran, Karawang 41385", service: true },
+  { name: "Puskesmas Lemahduhur", district: "Tempuran", address: "Jl. Silih Asih, Bayur Lemahduhur, Kec. Tempuran, Karawang 41385", service: true },
+  { name: "Puskesmas Kutawaluya", district: "Kutawaluya", address: "Jl. Raya Junti No.8, Sampalan, Kec. Kutawaluya, Karawang 41358", service: true },
+  { name: "Puskesmas Kutamukti", district: "Kutawaluya", address: "Jl. Komp. Poris, Kutamukti, Kec. Kutawaluya, Karawang 41358", service: true },
+  { name: "Puskesmas Rengasdengklok", district: "Rengasdengklok", address: "Jl. Ds. Rengasdengklok Selatan, Kec. Rengasdengklok, Karawang 41352", service: true },
+  { name: "Puskesmas Kalangsari", district: "Rengasdengklok", address: "Jl. Proklamasi, Kalangsari, Kec. Rengasdengklok, Karawang 41352", service: true },
+  { name: "Puskesmas Jayakerta", district: "Jayakerta", address: "Jl. Benda Jaya Selatan, Makmurjaya, Kec. Jayakerta, Karawang 41352", service: true },
+  { name: "Puskesmas Medangasem", district: "Jayakerta", address: "Jl. Raya Medangasem, Kec. Jayakerta, Karawang 41352", service: true },
+  { name: "Puskesmas Pedes", district: "Pedes", address: "Jl. Raya Pedes-Sungaibuntu, Payungsari, Kec. Pedes, Karawang 41353", service: true },
+  { name: "Puskesmas Sungaibuntu", district: "Pedes", address: "Jl. Raya Pusaka Jaya, Sungaibuntu, Kec. Pedes, Karawang 41353", service: true },
+  { name: "Puskesmas Kertamukti", district: "Cilebar", address: "Jl. Raya Cilebar, Kertamukti, Kec. Cilebar, Karawang 41353", service: true },
+  { name: "Puskesmas Cibuaya", district: "Cibuaya", address: "Jl. Moh. Thoyib, Cibuaya, Kec. Cibuaya, Karawang 41356", service: true },
+  { name: "Puskesmas Tirtajaya", district: "Tirtajaya", address: "Jl. Raya Sabajaya No.14, Sabajaya, Kec. Tirtajaya, Karawang 41357", service: true },
+  { name: "Puskesmas Batujaya", district: "Batujaya", address: "Jl. Raya Pasar, Batujaya, Kec. Batujaya, Karawang 41354", service: true },
+  { name: "Puskesmas Pakisjaya", district: "Pakisjaya", address: "Jl. Raya Pakisjaya, Tanjungbungin, Kec. Pakisjaya, Karawang 41355", service: true },
+];
+
+const DOWNLOAD_CATEGORIES = ["Semua", "Poster", "Leaflet", "Booklet", "Komik", "Infografis", "Presentasi", "Video"];
+
+/* ============================================================
+   CATATAN ADMIN — CARA MENAMBAHKAN GAMBAR / DOKUMEN UNDUHAN:
+   1. Upload file gambar (poster/infografis/komik) ke folder "images/" di GitHub.
+      Upload file dokumen (leaflet/booklet/presentasi PDF/PPTX) ke folder "files/".
+   2. Isi field "file" di bawah dengan path-nya, contoh: "images/poster-gejala.jpg"
+      atau "files/leaflet-mdt.pdf".
+   3. Item yang field "file"-nya masih null akan tampil sebagai "Segera Hadir"
+      dan tombol unduhnya nonaktif.
+============================================================ */
+const DEFAULT_DOWNLOADS = [
+  { title: "Poster Kenali Gejala Kusta", cat: "Poster", size: "2.1 MB", format: "JPG", file: null },
+  { title: "Leaflet Pengobatan MDT", cat: "Leaflet", size: "850 KB", format: "PDF", file: null },
+  { title: "Booklet Panduan Kader Kusta", cat: "Booklet", size: "4.6 MB", format: "PDF", file: null },
+  { title: "Komik Kang EngKus & Sahabat", cat: "Komik", size: "3.2 MB", format: "PDF", file: null },
+  { title: "Infografis Mitos vs Fakta", cat: "Infografis", size: "1.4 MB", format: "PNG", file: null },
+  { title: "Presentasi Edukasi Sekolah", cat: "Presentasi", size: "5.8 MB", format: "PPTX", file: null },
+  { title: "Video Animasi Penularan Kusta", cat: "Video", size: "18 MB", format: "MP4", file: null },
+  { title: "Poster Jangan Takut Periksa", cat: "Poster", size: "1.9 MB", format: "JPG", file: null },
+  { title: "Leaflet Perawatan Diri", cat: "Leaflet", size: "760 KB", format: "PDF", file: null },
+  { title: "Infografis Perjalanan Pengobatan", cat: "Infografis", size: "1.1 MB", format: "PNG", file: null },
+];
+
+const MASCOT_TIPS = [
+  "Tahukah kamu? Bercak kusta biasanya mati rasa, bukan gatal.",
+  "Kusta bisa disembuhkan total dengan obat MDT gratis di Puskesmas!",
+  "Bersalaman dengan penderita kusta tidak menularkan penyakit.",
+  "Semakin cepat diperiksa, semakin kecil risiko kecacatan.",
+  "Yuk ajak keluarga ikut skrining mandiri, cuma 2 menit!",
+  "Kenali kustanya, jangan jauhi orangnya ya!",
+];
+
+/* ============================================================
+   NAV
+============================================================ */
+const NAV_ITEMS = [
+  { id: "home", label: "Beranda" },
+  { id: "learn", label: "Belajar" },
+  { id: "videos", label: "Video" },
+  { id: "screening", label: "Skrining" },
+  { id: "locator", label: "Layanan" },
+  { id: "downloads", label: "Unduhan" },
+  { id: "about", label: "Tentang" },
+];
+
+function Header({ view, setView }) {
+  const [open, setOpen] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 8);
+    window.addEventListener("scroll", onScroll);
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+  const go = (id) => {
+    setView(id);
+    setOpen(false);
+  };
+  return (
+    <header
+      className={`sticky top-0 z-40 transition-all duration-300 ${
+        scrolled ? "bg-white/90 backdrop-blur-md shadow-sm" : "bg-transparent"
+      }`}
+    >
+      <div className="max-w-6xl mx-auto px-5 flex items-center justify-between h-20">
+        <button onClick={() => go("home")} className="flex items-center gap-3 group">
+          <div className="w-11 h-11 rounded-[14px] flex items-center justify-center shadow-md" style={{ background: `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary})` }}>
+            <HandHeart size={22} className="text-white" />
+          </div>
+          <div className="text-left">
+            <div className="font-extrabold text-slate-900 leading-tight text-lg">KANG ENGKUS</div>
+            <div className="text-[10px] text-slate-500 leading-tight -mt-0.5">Karawang Mengenal &amp; Peduli Kusta</div>
+          </div>
+        </button>
+
+        <nav className="hidden lg:flex items-center gap-1">
+          {NAV_ITEMS.map((n) => (
+            <button
+              key={n.id}
+              onClick={() => go(n.id)}
+              className={`px-4 py-2 rounded-full text-sm font-semibold transition-colors ${
+                view === n.id ? "text-white" : "text-slate-600 hover:bg-slate-100"
+              }`}
+              style={view === n.id ? { background: COLORS.primary } : {}}
+            >
+              {n.label}
+            </button>
+          ))}
+        </nav>
+
+        <div className="hidden lg:block">
+          <Button size="sm" onClick={() => go("report")}>
+            <AlertTriangle size={16} /> Laporkan Kasus
+          </Button>
+        </div>
+
+        <button className="lg:hidden p-2 rounded-full hover:bg-slate-100" onClick={() => setOpen(!open)}>
+          {open ? <X size={24} /> : <Menu size={24} />}
+        </button>
+      </div>
+
+      {open && (
+        <div className="lg:hidden bg-white border-t border-slate-100 px-5 py-4 space-y-1 shadow-lg">
+          {NAV_ITEMS.map((n) => (
+            <button
+              key={n.id}
+              onClick={() => go(n.id)}
+              className={`block w-full text-left px-4 py-3 rounded-[14px] text-sm font-semibold ${
+                view === n.id ? "text-white" : "text-slate-600 hover:bg-slate-50"
+              }`}
+              style={view === n.id ? { background: COLORS.primary } : {}}
+            >
+              {n.label}
+            </button>
+          ))}
+          <button onClick={() => go("report")} className="w-full text-left px-4 py-3 rounded-[14px] text-sm font-semibold text-amber-700 bg-amber-50 flex items-center gap-2">
+            <AlertTriangle size={16} /> Laporkan Kasus
+          </button>
+        </div>
+      )}
+    </header>
+  );
+}
+
+/* ============================================================
+   HERO / HOME VIEW
+============================================================ */
+function AnimatedNumber({ value }) {
+  const [n, setN] = useState(0);
+  const ref = useRef(null);
+  const [started, setStarted] = useState(false);
+  useEffect(() => {
+    const obs = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting && !started) setStarted(true);
+      },
+      { threshold: 0.4 }
+    );
+    if (ref.current) obs.observe(ref.current);
+    return () => obs.disconnect();
+  }, [started]);
+  useEffect(() => {
+    if (!started) return;
+    let raf;
+    const duration = 1200;
+    const t0 = performance.now();
+    const tick = (t) => {
+      const p = Math.min(1, (t - t0) / duration);
+      setN(Math.floor(p * value));
+      if (p < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [started, value]);
+  return <span ref={ref}>{n.toLocaleString("id-ID")}</span>;
+}
+
+function Hero({ setView }) {
+  const data = useContext(DataContext);
+  const STATS = (data && data.stats) || DEFAULT_STATS;
+  return (
+    <section className="relative overflow-hidden">
+      <div
+        className="absolute inset-0 -z-10"
+        style={{ background: `radial-gradient(120% 100% at 50% -10%, #DCFCE7 0%, ${COLORS.bg} 55%)` }}
+      />
+      <div className="absolute -top-10 -left-16 w-72 h-72 rounded-full opacity-30 blur-3xl -z-10" style={{ background: COLORS.secondary }} />
+      <div className="absolute top-40 -right-20 w-80 h-80 rounded-full opacity-20 blur-3xl -z-10" style={{ background: COLORS.accent }} />
+
+      <div className="max-w-6xl mx-auto px-5 pt-14 pb-16 grid md:grid-cols-2 gap-10 items-center">
+        <div className="text-center md:text-left">
+          <Badge tone="primary"><Sparkles size={12} /> Kabupaten Karawang</Badge>
+          <h1 className="mt-5 text-4xl md:text-5xl font-extrabold text-slate-900 leading-[1.1]">
+            Mengenal Kusta Kini <span style={{ color: COLORS.primaryDark }}>Lebih Mudah</span>
+          </h1>
+          <p className="mt-5 text-slate-500 text-lg max-w-md mx-auto md:mx-0">
+            Belajar, lakukan skrining mandiri, dan temukan layanan kesehatan kusta di Kabupaten Karawang bersama Kang EngKus.
+          </p>
+          <div className="mt-8 flex flex-col sm:flex-row gap-3 justify-center md:justify-start">
+            <Button size="lg" onClick={() => setView("learn")}>
+              Belajar Sekarang <ArrowRight size={18} />
+            </Button>
+            <Button size="lg" variant="outline" onClick={() => setView("screening")}>
+              Skrining Mandiri <ClipboardCheck size={18} />
+            </Button>
+          </div>
+          <p className="mt-4 text-xs text-slate-400 flex items-center gap-1 justify-center md:justify-start">
+            <ShieldCheck size={14} /> Informasi tervalidasi, gratis, dan mudah dipahami
+          </p>
+        </div>
+        <div className="flex justify-center">
+          <div className="relative animate-[float_5s_ease-in-out_infinite]">
+            <Mascot size={280} pose="wave" />
+          </div>
+        </div>
+      </div>
+
+      <div className="max-w-6xl mx-auto px-5 pb-16">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {STATS.map((s, i) => (
+            <Card key={i} className="p-5 text-center" hover={false}>
+              <div className="text-2xl md:text-3xl font-extrabold" style={{ color: COLORS.primaryDark }}>
+                <AnimatedNumber value={s.value} />
+                {s.suffix}
+              </div>
+              <div className="text-xs md:text-sm text-slate-500 mt-1">{s.label}</div>
+            </Card>
+          ))}
+        </div>
+      </div>
+      <style>{`@keyframes float {0%,100%{transform:translateY(0)}50%{transform:translateY(-14px)}}`}</style>
+    </section>
+  );
+}
+
+function HomeMenu({ setView }) {
+  const toneBg = { primary: "#DCFCE7", secondary: "#E0F2FE", accent: "#FEF3C7" };
+  const toneText = { primary: COLORS.primaryDark, secondary: "#0369A1", accent: "#B45309" };
+  return (
+    <section className="max-w-6xl mx-auto px-5 py-16">
+      <SectionHeading eyebrow="Menu Utama" title="Semua yang kamu butuhkan, dalam satu genggaman" subtitle="Pilih menu di bawah untuk mulai belajar, memeriksa risiko, atau mencari layanan kusta terdekat." center />
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+        {HOME_MENU.map((m) => {
+          const Icon = m.icon;
+          return (
+            <Card key={m.id} className="p-6 cursor-pointer group" onClick={() => setView(m.id)}>
+              <div
+                className="w-14 h-14 rounded-[16px] flex items-center justify-center mb-4 transition-transform group-hover:scale-110"
+                style={{ background: toneBg[m.tone] }}
+              >
+                <Icon size={26} style={{ color: toneText[m.tone] }} />
+              </div>
+              <h3 className="font-bold text-slate-900 text-lg mb-1">{m.title}</h3>
+              <p className="text-sm text-slate-500 mb-4">{m.desc}</p>
+              <span className="inline-flex items-center gap-1 text-sm font-semibold" style={{ color: toneText[m.tone] }}>
+                Buka <ChevronRight size={16} className="transition-transform group-hover:translate-x-1" />
+              </span>
+            </Card>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function QuickPromo({ setView }) {
+  return (
+    <section className="max-w-6xl mx-auto px-5 pb-20">
+      <div className="rounded-[20px] overflow-hidden relative p-8 md:p-12 grid md:grid-cols-2 items-center gap-8" style={{ background: `linear-gradient(120deg, ${COLORS.primary}, ${COLORS.secondary})` }}>
+        <div>
+          <h3 className="text-2xl md:text-3xl font-extrabold text-white mb-3">Ragu dengan bercak di kulitmu?</h3>
+          <p className="text-white/90 mb-6">Lakukan skrining mandiri sekarang. Prosesnya cepat, gratis, dan hasilnya bisa jadi panduan langkah selanjutnya.</p>
+          <Button variant="accent" size="lg" onClick={() => setView("screening")}>
+            Mulai Skrining <ArrowRight size={18} />
+          </Button>
+        </div>
+        <div className="flex justify-center">
+          <Mascot size={180} pose="point" />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* ============================================================
+   LEARNING CENTER
+============================================================ */
+function LearnView({ progress, toggleProgress }) {
+  const [active, setActive] = useState(null);
+  const toneBg = { primary: "#DCFCE7", secondary: "#E0F2FE", accent: "#FEF3C7" };
+  const toneText = { primary: COLORS.primaryDark, secondary: "#0369A1", accent: "#B45309" };
+  const doneCount = Object.values(progress).filter(Boolean).length;
+  const pct = Math.round((doneCount / LEARN_TOPICS.length) * 100);
+
+  const topic = LEARN_TOPICS.find((t) => t.id === active);
+
+  return (
+    <section className="max-w-6xl mx-auto px-5 py-14">
+      <SectionHeading eyebrow="Pusat Belajar" title="Belajar Kusta Sedikit Demi Sedikit" subtitle="Setiap topik singkat dan mudah dipahami. Tandai yang sudah kamu baca." />
+
+      <Card className="p-5 mb-8 flex items-center gap-4" hover={false}>
+        <ProgressRing value={pct} />
+        <div>
+          <div className="font-bold text-slate-900">{doneCount} dari {LEARN_TOPICS.length} topik selesai</div>
+          <div className="text-sm text-slate-500">Terus belajar, kamu hampir sampai!</div>
+        </div>
+      </Card>
+
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+        {LEARN_TOPICS.map((t) => (
+          <Card key={t.id} className="p-6 cursor-pointer relative" onClick={() => setActive(t.id)}>
+            {progress[t.id] && (
+              <span className="absolute top-4 right-4 text-green-600">
+                <CheckCircle2 size={20} />
+              </span>
+            )}
+            <div className="w-11 h-11 rounded-[12px] flex items-center justify-center mb-4" style={{ background: toneBg[t.tone] }}>
+              <BookOpen size={20} style={{ color: toneText[t.tone] }} />
+            </div>
+            <h3 className="font-bold text-slate-900 mb-1 pr-6">{t.title}</h3>
+            <p className="text-sm text-slate-500 mb-3">{t.summary}</p>
+            <span className="text-xs text-slate-400 flex items-center gap-1"><Clock size={12} /> {t.time} baca</span>
+          </Card>
+        ))}
+      </div>
+
+      {topic && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/50 p-0 sm:p-5" onClick={() => setActive(null)}>
+          <div className="bg-white w-full sm:max-w-xl sm:rounded-[20px] rounded-t-[24px] max-h-[88vh] overflow-y-auto p-7" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between mb-4">
+              <Badge tone={topic.tone}>{topic.time} baca</Badge>
+              <button onClick={() => setActive(null)} className="p-1 rounded-full hover:bg-slate-100"><X size={20} /></button>
+            </div>
+            <div className="flex justify-center mb-4">
+              <Mascot size={130} pose="point" />
+            </div>
+            <h3 className="text-2xl font-extrabold text-slate-900 mb-3">{topic.title}</h3>
+            <p className="text-slate-600 leading-relaxed mb-6">{topic.body}</p>
+            <div className="flex gap-3">
+              <Button
+                variant={progress[topic.id] ? "outline" : "primary"}
+                className="flex-1"
+                onClick={() => toggleProgress(topic.id)}
+              >
+                {progress[topic.id] ? <><Check size={16} /> Sudah Dipelajari</> : "Tandai Selesai"}
+              </Button>
+              <Button variant="ghost" className="!px-4" onClick={() => setActive(null)}>Tutup</Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/* ============================================================
+   VIDEO CENTER (Netflix style)
+============================================================ */
+function VideoCard({ v, onPlay }) {
+  const toneGrad = {
+    primary: `linear-gradient(135deg, ${COLORS.primary}, #0EA5E9)`,
+    secondary: `linear-gradient(135deg, ${COLORS.secondary}, #6366F1)`,
+    accent: `linear-gradient(135deg, ${COLORS.accent}, #EF4444)`,
+  };
+  const cleanId = extractYouTubeId(v.youtubeId);
+  const ready = Boolean(cleanId);
+  return (
+    <Card className="overflow-hidden shrink-0 w-64" hover={true}>
+      <button
+        onClick={() => ready && onPlay({ ...v, youtubeId: cleanId })}
+        disabled={!ready}
+        className="w-full h-36 relative flex items-center justify-center bg-cover bg-center disabled:cursor-not-allowed"
+        style={
+          ready
+            ? { backgroundImage: `url(https://img.youtube.com/vi/${cleanId}/hqdefault.jpg)` }
+            : { background: toneGrad[v.tone] }
+        }
+      >
+        {ready ? (
+          <div className="absolute inset-0 bg-black/25 flex items-center justify-center">
+            <PlayCircle size={44} className="text-white/95" />
+          </div>
+        ) : (
+          <PlayCircle size={44} className="text-white/60" />
+        )}
+        <span className="absolute bottom-2 right-2 bg-black/50 text-white text-[10px] px-2 py-0.5 rounded-full">
+          {ready ? v.dur : "Segera Hadir"}
+        </span>
+      </button>
+      <div className="p-4">
+        <div className="text-[11px] font-semibold uppercase tracking-wide mb-1" style={{ color: COLORS.primaryDark }}>{v.cat}</div>
+        <h4 className="font-bold text-slate-900 text-sm mb-3 leading-snug">{v.title}</h4>
+        <div className="flex items-center gap-2">
+          <Button size="sm" className="flex-1" onClick={() => ready && onPlay({ ...v, youtubeId: cleanId })} disabled={!ready}>
+            <Play size={14} /> {ready ? "Tonton" : "Segera Hadir"}
+          </Button>
+          <button className="p-2 rounded-[14px] border border-slate-200 hover:bg-slate-50"><Share2 size={14} /></button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function VideoModal({ video, onClose }) {
+  if (!video) return null;
+  return (
+    <div
+      className="fixed inset-0 z-[100] bg-black/70 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div className="w-full max-w-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-3">
+          <h4 className="text-white font-bold text-sm">{video.title}</h4>
+          <button onClick={onClose} className="text-white/80 hover:text-white p-1">
+            <X size={22} />
+          </button>
+        </div>
+        <div className="relative w-full rounded-[16px] overflow-hidden bg-black" style={{ paddingTop: "56.25%" }}>
+          <iframe
+            className="absolute inset-0 w-full h-full"
+            src={`https://www.youtube.com/embed/${video.youtubeId}?autoplay=1`}
+            title={video.title}
+            frameBorder="0"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowFullScreen
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function VideosView() {
+  const data = useContext(DataContext);
+  const VIDEOS = (data && data.videos) || DEFAULT_VIDEOS;
+  const [cat, setCat] = useState("Semua");
+  const [activeVideo, setActiveVideo] = useState(null);
+  const grouped = useMemo(() => {
+    if (cat !== "Semua") return { [cat]: VIDEOS.filter((v) => v.cat === cat) };
+    const g = {};
+    VIDEO_CATEGORIES.slice(1).forEach((c) => (g[c] = VIDEOS.filter((v) => v.cat === c)));
+    return g;
+  }, [cat, VIDEOS]);
+
+  return (
+    <section className="max-w-6xl mx-auto px-5 py-14">
+      <SectionHeading eyebrow="Video Center" title="Belajar Sambil Menonton" subtitle="Video singkat, mudah dicerna, cocok ditonton sendiri maupun bersama keluarga." />
+      <div className="flex gap-2 overflow-x-auto pb-4 mb-4 -mx-1 px-1">
+        {VIDEO_CATEGORIES.map((c) => (
+          <button
+            key={c}
+            onClick={() => setCat(c)}
+            className={`shrink-0 px-4 py-2 rounded-full text-sm font-semibold border transition-colors ${
+              cat === c ? "text-white border-transparent" : "text-slate-600 border-slate-200 hover:bg-slate-50"
+            }`}
+            style={cat === c ? { background: COLORS.primary } : {}}
+          >
+            {c}
+          </button>
+        ))}
+      </div>
+
+      {Object.entries(grouped).map(([catName, vids]) => (
+        vids.length > 0 && (
+          <div key={catName} className="mb-10">
+            <h3 className="font-bold text-slate-900 text-lg mb-4">{catName}</h3>
+            <div className="flex gap-4 overflow-x-auto pb-3 -mx-1 px-1">
+              {vids.map((v) => <VideoCard key={v.id} v={v} onPlay={setActiveVideo} />)}
+            </div>
+          </div>
+        )
+      ))}
+
+      <VideoModal video={activeVideo} onClose={() => setActiveVideo(null)} />
+    </section>
+  );
+}
+
+/* ============================================================
+   MYTH VS FACT
+============================================================ */
+function MythsView() {
+  const [idx, setIdx] = useState(0);
+  const [revealed, setRevealed] = useState(false);
+  const [done, setDone] = useState(0);
+  const m = MYTHS[idx];
+
+  const next = () => {
+    if (idx < MYTHS.length - 1) {
+      setIdx(idx + 1);
+      setRevealed(false);
+    } else {
+      setIdx(0);
+      setRevealed(false);
+      setDone(0);
+    }
+  };
+
+  const reveal = () => {
+    if (!revealed) setDone((d) => d + 1);
+    setRevealed(true);
+  };
+
+  return (
+    <section className="max-w-3xl mx-auto px-5 py-14">
+      <SectionHeading eyebrow="Mitos vs Fakta" title="Uji Pemahamanmu tentang Kusta" subtitle="Sentuh kartu untuk melihat faktanya. Semua pernyataan mitos di bawah ini TIDAK BENAR." center />
+
+      <div className="flex justify-center gap-1.5 mb-6">
+        {MYTHS.map((_, i) => (
+          <span key={i} className={`h-1.5 rounded-full transition-all ${i === idx ? "w-8" : "w-1.5"}`} style={{ background: i <= idx ? COLORS.primary : "#E2E8F0" }} />
+        ))}
+      </div>
+
+      <div className="relative h-80 [perspective:1200px]">
+        <div
+          onClick={reveal}
+          className="absolute inset-0 cursor-pointer transition-transform duration-500 [transform-style:preserve-3d]"
+          style={{ transform: revealed ? "rotateY(180deg)" : "rotateY(0deg)" }}
+        >
+          {/* front - myth */}
+          <div className="absolute inset-0 rounded-[20px] p-8 flex flex-col items-center justify-center text-center [backface-visibility:hidden]" style={{ background: `linear-gradient(135deg, #FEE2E2, #FEF3C7)` }}>
+            <Badge tone="accent"><Frown size={12} /> MITOS</Badge>
+            <p className="text-xl md:text-2xl font-bold text-slate-800 mt-5">&ldquo;{m.myth}&rdquo;</p>
+            <p className="text-sm text-slate-500 mt-6">Sentuh kartu untuk lihat faktanya →</p>
+          </div>
+          {/* back - fact */}
+          <div
+            className="absolute inset-0 rounded-[20px] p-8 flex flex-col items-center justify-center text-center [backface-visibility:hidden]"
+            style={{ background: `linear-gradient(135deg, #DCFCE7, #E0F2FE)`, transform: "rotateY(180deg)" }}
+          >
+            <Badge tone="primary"><Smile size={12} /> FAKTA</Badge>
+            <p className="text-lg md:text-xl font-semibold text-slate-800 mt-5">{m.fact}</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex justify-center gap-3 mt-8">
+        <Button variant="outline" onClick={() => { setIdx((i) => (i === 0 ? MYTHS.length - 1 : i - 1)); setRevealed(false); }}>
+          <ChevronLeft size={16} /> Sebelumnya
+        </Button>
+        <Button onClick={next}>
+          {idx === MYTHS.length - 1 && revealed ? <><RotateCcw size={16} /> Ulangi</> : <>Berikutnya <ChevronRight size={16} /></>}
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+/* ============================================================
+   SELF SCREENING
+============================================================ */
+function ScreeningView({ setView }) {
+  const [step, setStep] = useState(0); // 0..N-1 questions, N = result
+  const [answers, setAnswers] = useState({});
+  const total = SCREENING_QUESTIONS.length;
+  const finished = step >= total;
+
+  const answer = (val) => {
+    const q = SCREENING_QUESTIONS[step];
+    setAnswers((a) => ({ ...a, [q.id]: val }));
+    setStep((s) => s + 1);
+  };
+
+  const yesCount = Object.values(answers).filter((v) => v === true).length;
+  let risk = "Rendah";
+  let riskColor = COLORS.primary;
+  let riskDesc = "Kecil kemungkinan tanda kusta, tapi tetap kenali gejalanya.";
+  if (yesCount >= 4) {
+    risk = "Tinggi";
+    riskColor = "#EF4444";
+    riskDesc = "Beberapa tanda mengarah pada gejala kusta. Segera periksakan diri.";
+  } else if (yesCount >= 2) {
+    risk = "Sedang";
+    riskColor = COLORS.accent;
+    riskDesc = "Ada beberapa tanda yang perlu diperiksa lebih lanjut oleh petugas kesehatan.";
+  }
+
+  const restart = () => { setStep(0); setAnswers({}); };
+
+  return (
+    <section className="max-w-2xl mx-auto px-5 py-14">
+      <SectionHeading eyebrow="Skrining Mandiri" title="Cek Risiko Kustamu" subtitle="Jawab dengan jujur, hasil hanya untuk membantumu memutuskan langkah selanjutnya." center />
+
+      {!finished ? (
+        <Card className="p-8" hover={false}>
+          <div className="flex items-center justify-between mb-6">
+            <span className="text-sm font-semibold text-slate-400">Pertanyaan {step + 1} dari {total}</span>
+            <div className="w-32 h-2 bg-slate-100 rounded-full overflow-hidden">
+              <div className="h-full rounded-full transition-all duration-500" style={{ width: `${((step) / total) * 100}%`, background: COLORS.primary }} />
+            </div>
+          </div>
+          <div className="flex justify-center mb-6">
+            <Mascot size={110} pose="point" />
+          </div>
+          <h3 className="text-xl font-bold text-slate-900 text-center mb-8">{SCREENING_QUESTIONS[step].text}</h3>
+          <div className="grid grid-cols-2 gap-4">
+            <button onClick={() => answer(true)} className="py-5 rounded-[20px] border-2 font-bold text-lg transition-all hover:-translate-y-0.5" style={{ borderColor: COLORS.primary, color: COLORS.primaryDark }}>
+              Ya
+            </button>
+            <button onClick={() => answer(false)} className="py-5 rounded-[20px] border-2 border-slate-200 text-slate-500 font-bold text-lg hover:bg-slate-50 transition-all hover:-translate-y-0.5">
+              Tidak
+            </button>
+          </div>
+        </Card>
+      ) : (
+        <Card className="p-8 text-center" hover={false}>
+          <div className="flex justify-center mb-4"><Mascot size={120} pose="wave" /></div>
+          <Badge tone="slate">Hasil Skrining Mandiri</Badge>
+          <h3 className="text-2xl font-extrabold mt-4 mb-2" style={{ color: riskColor }}>Risiko {risk}</h3>
+          <p className="text-slate-500 mb-6">{riskDesc}</p>
+
+          <div className="bg-amber-50 border border-amber-200 rounded-[16px] p-4 text-left flex gap-3 mb-6">
+            <Info size={20} className="text-amber-600 shrink-0 mt-0.5" />
+            <p className="text-sm text-amber-800">
+              Ini <strong>BUKAN diagnosis medis</strong>. Silakan kunjungi fasilitas kesehatan terdekat untuk pemeriksaan lebih lanjut oleh tenaga medis.
+            </p>
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-3">
+            <Button className="flex-1" onClick={() => setView("locator")}>
+              <MapPin size={16} /> Cari Fasilitas Kesehatan
+            </Button>
+            <Button variant="outline" className="flex-1" onClick={restart}>
+              <RotateCcw size={16} /> Ulangi Skrining
+            </Button>
+          </div>
+
+          <a
+            href="https://wa.me/6289677399649"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-3 w-full inline-flex items-center justify-center gap-2 font-semibold rounded-[20px] px-5 py-3 text-sm text-white shadow-lg shadow-sky-500/25 hover:shadow-xl hover:-translate-y-0.5 transition-all duration-200"
+            style={{ background: `linear-gradient(135deg, ${COLORS.secondary}, #0369A1)` }}
+          >
+            <Phone size={16} /> Hubungi Pak Wasor (WhatsApp)
+          </a>
+        </Card>
+      )}
+    </section>
+  );
+}
+
+/* ============================================================
+   SERVICE LOCATOR
+============================================================ */
+function LocatorView() {
+  const data = useContext(DataContext);
+  const FACILITIES = (data && data.facilities) || DEFAULT_FACILITIES;
+  const [district, setDistrict] = useState("Semua Kecamatan");
+  const [query, setQuery] = useState("");
+  const list = FACILITIES.filter(
+    (f) =>
+      (district === "Semua Kecamatan" || f.district === district) &&
+      f.name.toLowerCase().includes(query.toLowerCase())
+  );
+
+  return (
+    <section className="max-w-6xl mx-auto px-5 py-14">
+      <SectionHeading eyebrow="Cari Layanan" title="Temukan Puskesmas Terdekat" subtitle="Cari layanan pemeriksaan dan pengobatan kusta di Kabupaten Karawang." />
+
+      <div className="flex flex-col sm:flex-row gap-3 mb-6">
+        <div className="relative flex-1">
+          <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Cari nama Puskesmas..."
+            className="w-full pl-11 pr-4 py-3 rounded-[20px] border border-slate-200 focus:outline-none focus:ring-2 focus:ring-green-300 text-sm"
+          />
+        </div>
+        <select
+          value={district}
+          onChange={(e) => setDistrict(e.target.value)}
+          className="px-4 py-3 rounded-[20px] border border-slate-200 focus:outline-none focus:ring-2 focus:ring-green-300 text-sm bg-white"
+        >
+          {DISTRICTS.map((d) => <option key={d}>{d}</option>)}
+        </select>
+      </div>
+
+      {/* map placeholder */}
+      <div className="rounded-[20px] h-52 mb-8 relative overflow-hidden flex items-center justify-center" style={{ background: `linear-gradient(135deg, #E0F2FE, #DCFCE7)` }}>
+        <div className="absolute inset-0 opacity-20" style={{ backgroundImage: "radial-gradient(#0EA5E9 1px, transparent 1px)", backgroundSize: "18px 18px" }} />
+        <div className="text-center relative">
+          <MapPin size={30} className="mx-auto mb-2" style={{ color: COLORS.secondary }} />
+          <p className="text-sm font-semibold text-slate-600">Peta interaktif Puskesmas se-Karawang</p>
+          <p className="text-xs text-slate-400">{list.length} lokasi ditemukan</p>
+        </div>
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-5">
+        {list.map((f, i) => (
+          <Card key={i} className="p-6" hover={false}>
+            <div className="flex items-start justify-between mb-3">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-[12px] flex items-center justify-center" style={{ background: "#DCFCE7" }}>
+                  <Building2 size={20} style={{ color: COLORS.primaryDark }} />
+                </div>
+                <div>
+                  <h4 className="font-bold text-slate-900 leading-tight">{f.name}</h4>
+                  <span className="text-xs text-slate-400">{f.district}</span>
+                </div>
+              </div>
+              {f.service ? <Badge tone="primary">Layani Kusta</Badge> : <Badge tone="slate">Rujuk</Badge>}
+            </div>
+            <p className="text-sm text-slate-500 flex items-start gap-2 mb-4"><MapPin size={14} className="mt-0.5 shrink-0" /> {f.address}</p>
+            <div className="flex gap-2">
+              <a
+                href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(f.name + ", " + f.address)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex-1 inline-flex items-center justify-center gap-2 font-semibold rounded-[20px] px-4 py-2 text-xs border-2 bg-white hover:bg-slate-50 transition-all duration-200"
+                style={{ borderColor: COLORS.primary, color: COLORS.primaryDark }}
+              >
+                <Navigation size={14} /> Arahkan
+              </a>
+              <a
+                href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(f.name + ", " + f.address)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex-1 inline-flex items-center justify-center gap-2 font-semibold rounded-[20px] px-4 py-2 text-xs text-white shadow-lg shadow-green-500/25 hover:shadow-xl hover:shadow-green-500/35 hover:-translate-y-0.5 transition-all duration-200"
+                style={{ background: `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.primaryDark})` }}
+              >
+                <Phone size={14} /> Hubungi
+              </a>
+            </div>
+          </Card>
+        ))}
+        {list.length === 0 && (
+          <p className="text-sm text-slate-400 col-span-2 text-center py-10">Tidak ada Puskesmas yang cocok dengan pencarianmu.</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/* ============================================================
+   REPORT SUSPECTED CASE
+============================================================ */
+function ReportView() {
+  const [sent, setSent] = useState(false);
+  const [sendError, setSendError] = useState(false);
+  const [consent, setConsent] = useState(false);
+  const [form, setForm] = useState({ name: "", phone: "", address: "", district: DISTRICTS[1], complaint: "" });
+
+  const buildWaLink = () => {
+    const lines = [
+      "Halo Pak Wasor, saya ingin melaporkan dugaan kasus kusta melalui situs KANG ENGKUS:",
+      "",
+      `Nama: ${form.name}`,
+      `No. Telepon: ${form.phone}`,
+      `Alamat: ${form.address}`,
+      `Kecamatan: ${form.district}`,
+      `Keluhan/Ciri-ciri: ${form.complaint}`,
+    ];
+    const text = encodeURIComponent(lines.join("\n"));
+    return `https://wa.me/${WASOR_WA_NUMBER}?text=${text}`;
+  };
+
+  const submit = (e) => {
+    e.preventDefault();
+    if (!consent) return;
+    setSendError(false);
+    try {
+      const link = buildWaLink();
+      window.open(link, "_blank", "noopener,noreferrer");
+      setSent(true);
+    } catch (err) {
+      setSendError(true);
+    }
+  };
+
+  if (sent) {
+    return (
+      <section className="max-w-xl mx-auto px-5 py-20 text-center">
+        <div className="flex justify-center mb-4"><Mascot size={140} pose="wave" /></div>
+        <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-5">
+          <CheckCircle2 size={32} style={{ color: COLORS.primaryDark }} />
+        </div>
+        <h3 className="text-2xl font-extrabold text-slate-900 mb-3">Hampir selesai!</h3>
+        <p className="text-slate-500 mb-6">Sebuah tab WhatsApp baru telah dibuka dengan pesan laporanmu ke Pak Wasor Kusta. Tinggal ditinjau lalu tekan kirim di WhatsApp untuk menyelesaikan laporan.</p>
+        <div className="flex flex-col sm:flex-row gap-3 justify-center">
+          <a
+            href={buildWaLink()}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center justify-center gap-2 font-semibold rounded-[20px] px-5 py-3 text-sm text-white shadow-lg shadow-green-500/25 hover:shadow-xl hover:-translate-y-0.5 transition-all duration-200"
+            style={{ background: `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.primaryDark})` }}
+          >
+            <Phone size={16} /> Buka WhatsApp Lagi
+          </a>
+          <Button variant="outline" onClick={() => { setSent(false); setForm({ name: "", phone: "", address: "", district: DISTRICTS[1], complaint: "" }); setConsent(false); }}>
+            Kirim Laporan Lain
+          </Button>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="max-w-xl mx-auto px-5 py-14">
+      <SectionHeading eyebrow="Laporkan Kasus Terduga" title="Bantu Kami Menjangkau Lebih Cepat" subtitle="Laporan dikirim langsung ke WhatsApp Pak Wasor Kusta dan hanya digunakan untuk keperluan tindak lanjut kesehatan." center />
+      <Card className="p-7" hover={false}>
+        <form onSubmit={submit} className="space-y-4">
+          <div>
+            <label className="text-sm font-semibold text-slate-700 block mb-1.5">Nama</label>
+            <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full px-4 py-3 rounded-[16px] border border-slate-200 focus:outline-none focus:ring-2 focus:ring-green-300 text-sm" placeholder="Nama lengkap" />
+          </div>
+          <div>
+            <label className="text-sm font-semibold text-slate-700 block mb-1.5">Nomor Telepon</label>
+            <input required value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="w-full px-4 py-3 rounded-[16px] border border-slate-200 focus:outline-none focus:ring-2 focus:ring-green-300 text-sm" placeholder="08xxxxxxxxxx" />
+          </div>
+          <div>
+            <label className="text-sm font-semibold text-slate-700 block mb-1.5">Alamat</label>
+            <input required value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} className="w-full px-4 py-3 rounded-[16px] border border-slate-200 focus:outline-none focus:ring-2 focus:ring-green-300 text-sm" placeholder="Alamat lengkap" />
+          </div>
+          <div>
+            <label className="text-sm font-semibold text-slate-700 block mb-1.5">Kecamatan</label>
+            <select value={form.district} onChange={(e) => setForm({ ...form, district: e.target.value })} className="w-full px-4 py-3 rounded-[16px] border border-slate-200 focus:outline-none focus:ring-2 focus:ring-green-300 text-sm bg-white">
+              {DISTRICTS.slice(1).map((d) => <option key={d}>{d}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-sm font-semibold text-slate-700 block mb-1.5">Keluhan</label>
+            <textarea required value={form.complaint} onChange={(e) => setForm({ ...form, complaint: e.target.value })} rows={4} className="w-full px-4 py-3 rounded-[16px] border border-slate-200 focus:outline-none focus:ring-2 focus:ring-green-300 text-sm resize-none" placeholder="Ceritakan keluhan atau tanda yang terlihat..." />
+          </div>
+          <div>
+            <label className="text-sm font-semibold text-slate-700 block mb-1.5">Foto (opsional)</label>
+            <label className="flex items-center justify-center gap-2 border-2 border-dashed border-slate-200 rounded-[16px] py-6 text-slate-400 text-sm cursor-pointer hover:border-green-300 hover:text-green-600 transition-colors">
+              <Camera size={18} /> Unggah foto pendukung
+              <input type="file" className="hidden" />
+            </label>
+          </div>
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} className="mt-1 w-4 h-4 accent-green-600" />
+            <span className="text-xs text-slate-500">Saya menyetujui data ini digunakan oleh petugas kesehatan untuk keperluan tindak lanjut, sesuai kebijakan privasi.</span>
+          </label>
+          {sendError && (
+            <div className="bg-red-50 border border-red-200 rounded-[16px] p-4 flex gap-3">
+              <AlertTriangle size={18} className="text-red-600 shrink-0 mt-0.5" />
+              <p className="text-xs text-red-700">Gagal membuka WhatsApp. Pastikan browser mengizinkan pop-up, atau hubungi Pak Wasor langsung di 0896-7739-9649.</p>
+            </div>
+          )}
+          <Button type="submit" size="lg" className="w-full" disabled={!consent}>
+            <Send size={16} /> Kirim Laporan via WhatsApp
+          </Button>
+        </form>
+      </Card>
+    </section>
+  );
+}
+
+/* ============================================================
+   DOWNLOAD CENTER
+============================================================ */
+const DL_ICON = { Poster: ImageIcon, Leaflet: FileText, Booklet: FileText, Komik: ImageIcon, Infografis: ImageIcon, Presentasi: FileText, Video: VideoIcon };
+
+function DownloadsView() {
+  const data = useContext(DataContext);
+  const DOWNLOADS = (data && data.downloads) || DEFAULT_DOWNLOADS;
+  const [cat, setCat] = useState("Semua");
+  const list = cat === "Semua" ? DOWNLOADS : DOWNLOADS.filter((d) => d.cat === cat);
+  return (
+    <section className="max-w-6xl mx-auto px-5 py-14">
+      <SectionHeading eyebrow="Pusat Unduhan" title="Media Edukasi Siap Pakai" subtitle="Unduh dan sebarkan materi edukasi kusta untuk sekolah, komunitas, atau keluargamu." />
+      <div className="flex gap-2 overflow-x-auto pb-4 mb-6 -mx-1 px-1">
+        {DOWNLOAD_CATEGORIES.map((c) => (
+          <button
+            key={c}
+            onClick={() => setCat(c)}
+            className={`shrink-0 px-4 py-2 rounded-full text-sm font-semibold border transition-colors ${
+              cat === c ? "text-white border-transparent" : "text-slate-600 border-slate-200 hover:bg-slate-50"
+            }`}
+            style={cat === c ? { background: COLORS.primary } : {}}
+          >
+            {c}
+          </button>
+        ))}
+      </div>
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+        {list.map((d, i) => {
+          const Icon = DL_ICON[d.cat] || FileText;
+          const ready = Boolean(d.file);
+          return (
+            <Card key={i} className="p-5 flex items-center gap-4" hover={true}>
+              <div className="w-12 h-12 rounded-[14px] flex items-center justify-center shrink-0" style={{ background: "#E0F2FE" }}>
+                <Icon size={22} style={{ color: COLORS.secondary }} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h4 className="font-bold text-slate-900 text-sm leading-snug truncate">{d.title}</h4>
+                <p className="text-xs text-slate-400">{d.format} • {d.size} {!ready && "• Segera Hadir"}</p>
+              </div>
+              {ready ? (
+                <a
+                  href={d.file}
+                  download
+                  className="p-2.5 rounded-[14px] shrink-0"
+                  style={{ background: COLORS.primary }}
+                >
+                  <Download size={16} className="text-white" />
+                </a>
+              ) : (
+                <span className="p-2.5 rounded-[14px] shrink-0 bg-slate-200 cursor-not-allowed">
+                  <Download size={16} className="text-slate-400" />
+                </span>
+              )}
+            </Card>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+/* ============================================================
+   ABOUT
+============================================================ */
+function AboutView() {
+  return (
+    <section className="max-w-5xl mx-auto px-5 py-14">
+      <SectionHeading eyebrow="Tentang Kang EngKus" title="Kenali Kustanya, Jangan Jauhi Orangnya" subtitle="Kang EngKus hadir sebagai sahabat digital warga Karawang untuk melawan kusta dan stigmanya." center />
+
+      <div className="flex justify-center mb-12">
+        <Mascot size={200} pose="point" />
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-5 mb-10">
+        <Card className="p-7" hover={false}>
+          <div className="w-12 h-12 rounded-[14px] flex items-center justify-center mb-4" style={{ background: "#DCFCE7" }}>
+            <Compass size={22} style={{ color: COLORS.primaryDark }} />
+          </div>
+          <h3 className="font-bold text-lg text-slate-900 mb-2">Visi</h3>
+          <p className="text-sm text-slate-500">Karawang bebas kusta dan bebas stigma, di mana setiap warga berani memeriksakan diri sejak dini.</p>
+        </Card>
+        <Card className="p-7" hover={false}>
+          <div className="w-12 h-12 rounded-[14px] flex items-center justify-center mb-4" style={{ background: "#E0F2FE" }}>
+            <Target size={22} style={{ color: COLORS.secondary }} />
+          </div>
+          <h3 className="font-bold text-lg text-slate-900 mb-2">Misi</h3>
+          <ul className="text-sm text-slate-500 space-y-1.5">
+            <li>• Menyebarkan edukasi kusta yang mudah dipahami</li>
+            <li>• Mendorong deteksi dan pengobatan dini</li>
+            <li>• Menghapus stigma di masyarakat</li>
+            <li>• Mempermudah akses ke layanan kesehatan</li>
+          </ul>
+        </Card>
+      </div>
+
+      <div className="grid md:grid-cols-3 gap-5 mb-10">
+        {[
+          { icon: Sparkles, tone: "accent", title: "Tujuan", text: "Meningkatkan kesadaran dan literasi kusta di seluruh lapisan masyarakat Karawang." },
+          { icon: HeartHandshake, tone: "primary", title: "Manfaat", text: "Warga lebih cepat mengenali gejala, tidak takut memeriksakan diri, dan mendukung sesama." },
+          { icon: Star, tone: "secondary", title: "Inovasi", text: "Skrining mandiri, peta layanan, dan media edukasi interaktif dalam satu platform." },
+        ].map((f, i) => {
+          const Icon = f.icon;
+          const bg = { accent: "#FEF3C7", primary: "#DCFCE7", secondary: "#E0F2FE" }[f.tone];
+          const color = { accent: "#B45309", primary: COLORS.primaryDark, secondary: COLORS.secondary }[f.tone];
+          return (
+            <Card key={i} className="p-6" hover={false}>
+              <div className="w-11 h-11 rounded-[12px] flex items-center justify-center mb-3" style={{ background: bg }}>
+                <Icon size={20} style={{ color }} />
+              </div>
+              <h4 className="font-bold text-slate-900 mb-1.5">{f.title}</h4>
+              <p className="text-sm text-slate-500">{f.text}</p>
+            </Card>
+          );
+        })}
+      </div>
+
+      <Card className="p-7" hover={false}>
+        <h3 className="font-bold text-lg text-slate-900 mb-4">Mitra Program</h3>
+        <div className="flex flex-wrap gap-3">
+          {["Dinas Kesehatan Kabupaten Karawang", "Puskesmas se-Kabupaten Karawang", "Kader Kesehatan Masyarakat", "NLR Indonesia", "Sekolah Mitra Karawang"].map((p) => (
+            <span key={p} className="px-4 py-2 rounded-full bg-slate-50 border border-slate-200 text-sm text-slate-600 font-medium">{p}</span>
+          ))}
+        </div>
+      </Card>
+    </section>
+  );
+}
+
+/* ============================================================
+   FOOTER
+============================================================ */
+function Footer({ setView }) {
+  return (
+    <footer className="bg-slate-900 text-slate-300 mt-10">
+      <div className="max-w-6xl mx-auto px-5 py-14 grid sm:grid-cols-2 lg:grid-cols-4 gap-10">
+        <div>
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-10 h-10 rounded-[12px] flex items-center justify-center" style={{ background: `linear-gradient(135deg, ${COLORS.primary}, ${COLORS.secondary})` }}>
+              <HandHeart size={18} className="text-white" />
+            </div>
+            <div className="font-extrabold text-white">KANG ENGKUS</div>
+          </div>
+          <p className="text-sm text-slate-400">Karawang Mengenal dan Peduli Kusta. Kenali kustanya, jangan jauhi orangnya.</p>
+        </div>
+        <div>
+          <h4 className="font-bold text-white mb-4 text-sm">Kontak Darurat</h4>
+          <ul className="text-sm space-y-2 text-slate-400">
+            <li className="flex items-center gap-2"><Phone size={14} /> Dinkes Karawang: (0267) 402276</li>
+          </ul>
+        </div>
+        <div>
+          <h4 className="font-bold text-white mb-4 text-sm">Tautan</h4>
+          <ul className="text-sm space-y-2 text-slate-400">
+            <li><button onClick={() => setView("locator")} className="hover:text-white">Lokasi Puskesmas</button></li>
+            <li><button onClick={() => setView("about")} className="hover:text-white">Tentang Kami</button></li>
+            <li><button className="hover:text-white">Kebijakan Privasi</button></li>
+            <li><button className="hover:text-white">Aksesibilitas</button></li>
+          </ul>
+        </div>
+        <div>
+          <h4 className="font-bold text-white mb-4 text-sm">FAQ</h4>
+          <ul className="text-sm space-y-2 text-slate-400">
+            <li>Apakah layanan ini gratis?</li>
+            <li>Apakah data saya aman?</li>
+            <li>Bagaimana cara melapor?</li>
+          </ul>
+        </div>
+      </div>
+      <div className="border-t border-slate-800 py-5 text-center text-xs text-slate-500">
+        © 2026 Kang EngKus — Program Edukasi Kusta Kabupaten Karawang.
+      </div>
+    </footer>
+  );
+}
+
+/* ============================================================
+   FLOATING MASCOT TIP
+============================================================ */
+function FloatingMascot() {
+  const [open, setOpen] = useState(false);
+  const [tip, setTip] = useState(MASCOT_TIPS[0]);
+  const show = () => {
+    setTip(MASCOT_TIPS[Math.floor(Math.random() * MASCOT_TIPS.length)]);
+    setOpen((o) => !o);
+  };
+  return (
+    <div className="fixed bottom-5 right-5 z-40 flex flex-col items-end gap-3">
+      {open && (
+        <div className="max-w-[220px] bg-white rounded-[16px] shadow-xl p-4 text-sm text-slate-600 relative animate-[popIn_0.25s_ease]">
+          <button onClick={() => setOpen(false)} className="absolute top-2 right-2 text-slate-300 hover:text-slate-500"><X size={14} /></button>
+          <span className="font-bold text-slate-900 block mb-1">Kang EngKus bilang:</span>
+          {tip}
+        </div>
+      )}
+      <button onClick={show} className="w-16 h-16 rounded-full shadow-xl flex items-center justify-center overflow-hidden bg-white border-4 border-white hover:scale-105 transition-transform" style={{ boxShadow: "0 10px 30px rgba(34,197,94,0.35)" }}>
+        <Mascot size={70} pose="wave" />
+      </button>
+      <style>{`@keyframes popIn{0%{opacity:0;transform:translateY(10px) scale(0.9)}100%{opacity:1;transform:translateY(0) scale(1)}}`}</style>
+    </div>
+  );
+}
+
+/* ============================================================
+   APP ROOT
+============================================================ */
+export default function App() {
+  const [view, setView] = useState("home");
+  const [progress, setProgress] = useState({});
+  const sheetData = useSheetData({
+    stats: DEFAULT_STATS,
+    videos: DEFAULT_VIDEOS,
+    downloads: DEFAULT_DOWNLOADS,
+    facilities: DEFAULT_FACILITIES,
+  });
+
+  // Kirim "virtual pageview" ke Google Analytics tiap kali menu berpindah,
+  // supaya kelihatan menu mana yang paling sering dibuka (bukan cuma total
+  // kunjungan ke satu halaman saja, karena situs ini single-page app).
+  useEffect(() => {
+    if (typeof window.gtag === "function") {
+      window.gtag("event", "page_view", {
+        page_title: "KANG ENGKUS - " + view,
+        page_path: "/" + view,
+      });
+    }
+  }, [view]);
+
+  const changeView = (v) => {
+    setView(v);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const toggleProgress = (id) => setProgress((p) => ({ ...p, [id]: !p[id] }));
+
+  let content;
+  if (view === "home") {
+    content = (
+      <>
+        <Hero setView={changeView} />
+        <HomeMenu setView={changeView} />
+        <QuickPromo setView={changeView} />
+      </>
+    );
+  } else if (view === "learn") content = <LearnView progress={progress} toggleProgress={toggleProgress} />;
+  else if (view === "videos") content = <VideosView />;
+  else if (view === "myths") content = <MythsView />;
+  else if (view === "screening") content = <ScreeningView setView={changeView} />;
+  else if (view === "locator") content = <LocatorView />;
+  else if (view === "report") content = <ReportView />;
+  else if (view === "downloads") content = <DownloadsView />;
+  else if (view === "about") content = <AboutView />;
+  else content = <Hero setView={changeView} />;
+
+  return (
+    <DataContext.Provider value={sheetData}>
+      <div style={{ background: COLORS.bg, fontFamily: "'Poppins', sans-serif" }} className="min-h-screen text-slate-800">
+        <style>{`
+          @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap');
+          * { -webkit-tap-highlight-color: transparent; }
+          ::selection { background: #BBF7D0; }
+        `}</style>
+        <Header view={view} setView={changeView} />
+        <main>{content}</main>
+        <Footer setView={changeView} />
+        <FloatingMascot />
+      </div>
+    </DataContext.Provider>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App />);
+</script>
+</body>
+</html>
